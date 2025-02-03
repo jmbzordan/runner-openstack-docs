@@ -1,0 +1,70 @@
+#!/bin/sh
+# Shell responsável por carregar variáveis com base no ambiente que é passado como parâmetro.
+
+environment=$1
+
+# Carrega variáveis de ambiente cujo valor se mantém em todos os ambientes.
+
+# VERIFICAR ESSA OPCAO DE UM VAULT
+export VAULT_ADDR="https://vault.sicredi.net"			   # Como será utilizado para buscar usuário de aplicação para gerar token pela API do ambiente Openstack desejado, será utilizado Vault de PRD somente.
+export TF_VAR_vault_method="aws"                                   # Carrega variáveis de perfil para autenticação no Vault
+export TF_VAR_vault_path="auth/aws/login"
+export TF_VAR_vault_parameters='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+export OS_PROJECT_NAME=$environment
+export OS_IDENTITY_API_VERSION=3                                   # Versão da API de autenticação no Openstack
+export OS_USER_DOMAIN_NAME="sicredi"                               # Nome do domínio de usuário do Openstack
+export OS_PROJECT_DOMAIN_NAME="sicredi"                            # Nome do domínio do projeto do ambiente no Openstack
+export OS_AUTH_TYPE="v3token"                                      # Método que será utilizado para autenticação no Openstack
+
+case "$environment" in
+  dev|uat|stress|sicredi-shd|prd)  # Caso o parametro do ambiente seja "shd" ou "prd"
+
+    ###############################
+    # Para fins de histórico:
+    # terraform workspace select -or-create prd > /dev/null 2>&1        # Seleção da workspace atualmente ocorre na pipeline devido a necessidade de ser executado depois do init.
+    # export TF_WORKSPACE="prd"                # Caso a workspace não exista ainda, essa variável de ambiente preenchida não cria a workspace, logo foi passado para a pipeline através de linha de comando pelo mesmo motivo descrito acima.
+    ###############################
+
+    # Carrega variáveis dependentes do ambiente utilizado
+    # Se for "shd" ou "prd", URL da API keystone é diferente de quando for "dev" ou "uat" ou "stress"
+    if [ "$environment" = "sicredi-shd" ] || [ "$environment" = "prd" ]; then
+       export OS_AUTH_URL="https://keystone.oam.prd.infra.sicredi.net:5000/v3"      # URL da API de autenticação Openstack produção
+    else
+       export OS_AUTH_URL="https://keystone.api.dtu.infra.sicredi.net:5000/v3"      # URL da API de autenticação Openstack não produção
+    fi
+
+    # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+    # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+    # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+    export OS_TOKEN=$( \
+              OS_USER_CREDENTIALS=$( \
+                 VAULT_TOKEN=$( \
+                    vault login -no-store -token-only -tls-skip-verify -address=$VAULT_ADDR -method=aws role=iac-node \
+                 ) \
+                 vault kv get -format=json -tls-skip-verify -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack |  ata' \
+              ) && \
+              curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+                 \"auth\": { \
+                    \"identity\": { \
+                       \"methods\": [\"password\"], \
+                       \"password\": { \
+                          \"user\": { \
+                             \"domain\": { \
+                                \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                             }, \
+                             \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                             \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                          } \
+                       } \
+                    } \
+                 } \
+              }" | \
+              grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+    )
+    ;;
+  *)
+    echo "Ambiente inválido: $environment"
+    echo "Ambientes disponíveis: dev, uat, stress, sicredi-shd, prd"
+    exit 1
+    ;;
+esac

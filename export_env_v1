@@ -1,0 +1,194 @@
+#!/bin/sh
+# Shell responsável por carregar variáveis com base no ambiente que é passado como parâmetro.
+
+case "$1" in
+  # Caso o parametro do ambiente seja "dev"
+  # Primeiramente carrega as variáveis necessárias para buscar as credenciais do Openstack autenticando no Vault do ambiente e posteriormente deploy da stack Terraform.
+  dev)
+    #terraform workspace select -or-create dev > /dev/null 2>&1                  # Selecão da workspace atualmente ocorre na pipeline devido a necessidade de ser executado depois do init.
+    #export TF_WORKSPACE="dev"                                                   # Caso a workspace não exista ainda, essa variável de ambiente preenchida não cria a workspace, logo foi passado para a pipeline através de linha de comando pelo mesmo motivo descrito acima.
+    export VAULT_ADDR="http://vault.des.sicredi.net:8200"                        # URL do Vault do ambiente
+    export TF_VAR_vault_method="aws"                                   # Carrega variáveis de perfil para autenticação no Vault
+    export TF_VAR_vault_path="auth/aws/login"
+    export TF_VAR_vault_parameters='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+    export OS_PROJECT_NAME="DEV"                                                 # Nome do Projeto Openstack do ambiente
+    export OS_AUTH_URL="https://keystone.api.dtu.infra.sicredi.net:5000/v3"      # URL de autenticação no Openstack - API de autenticação
+    export OS_IDENTITY_API_VERSION=3                                             # Versão da API de autenticação no Openstack
+    export OS_USER_DOMAIN_NAME="sicredi"                                         # Nome do domínio de usuário do Openstack
+    export OS_PROJECT_DOMAIN_NAME="sicredi"                                      # Nome do domínio do projeto do ambiente no Openstack
+    export OS_AUTH_TYPE="v3token"                                                # Método que será utilizado para autenticação no Openstack
+
+    # Busca o Token temporário para autenticação e deploy no Openstack
+    # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+    # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+    # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+    export OS_TOKEN=$( \
+              OS_USER_CREDENTIALS=$( \
+                 VAULT_TOKEN=$( \
+                    vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac-node \
+                 ) \
+                 vault kv get -format=json -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack | jq -r '.data' \
+              ) && \
+              curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+                 \"auth\": { \
+                    \"identity\": { \
+                       \"methods\": [\"password\"], \
+                       \"password\": { \
+                          \"user\": { \
+                             \"domain\": { \
+                                \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                             }, \
+                             \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                             \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                          } \
+                       } \
+                    } \
+                 } \
+              }" | \
+              grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+    )
+    ;;
+  # Caso o parametro do ambiente seja "uat"
+  # Primeiramente carrega as variáveis necessárias para buscar as credenciais do Openstack autenticando no Vault do ambiente e posteriormente deploy da stack Terraform.
+  uat)
+    #terraform workspace select -or-create uat > /dev/null 2>&1                  # Selecão da workspace atualmente ocorre na pipeline devido a necessidade de ser executado depois do init.
+    #export TF_WORKSPACE="uat"                                                   # Caso a workspace não exista ainda, essa variável de ambiente preenchida não cria a workspace, logo foi passado para a pipeline através de linha de comando pelo mesmo motivo descrito acima.
+    export VAULT_ADDR="http://vault.hom.sicredi.net:8200"                        # URL do Vault do ambiente
+    export TF_VAR_VAULT_METHOD="aws"                                             # Carrega variáveis de autenticação do Vault
+    export TF_VAR_VAULT_PATH="auth/aws/login"
+    export TF_VAR_VAULT_PARAMETERS='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+    export OS_PROJECT_NAME="UAT"                                                 # Nome do Projeto Openstack do ambiente
+    export OS_AUTH_URL="https://keystone.api.dtu.infra.sicredi.net:5000/v3"      # URL de autenticação no Openstack - API de autenticação
+    export OS_IDENTITY_API_VERSION=3                                             # Versão da API de autenticação no Openstack
+    export OS_USER_DOMAIN_NAME="sicredi"                                         # Nome do domínio de usuário do Openstack
+    export OS_PROJECT_DOMAIN_NAME="sicredi"                                      # Nome do domínio do projeto do ambiente no Openstack
+    export OS_AUTH_TYPE="v3token"                                                # Método que será utilizado para autenticação no Openstack
+
+    # Busca o Token temporário para autenticação e deploy no Openstack
+    # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+    # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+    # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+    export OS_TOKEN=$( \
+              OS_USER_CREDENTIALS=$( \
+                 VAULT_TOKEN=$( \
+                    vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac-node \
+                 ) \
+                 vault kv get -format=json -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack | jq -r '.data' \
+              ) && \
+              curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+                 \"auth\": { \
+                    \"identity\": { \
+                       \"methods\": [\"password\"], \
+                       \"password\": { \
+                          \"user\": { \
+                             \"domain\": { \
+                                \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                             }, \
+                             \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                             \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                          } \
+                       } \
+                    } \
+                 } \
+              }" | \
+              grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+    )
+    ;;
+  # Caso o parametro do ambiente seja "stress"
+  # Primeiramente carrega as variáveis necessárias para buscar as credenciais do Openstack autenticando no Vault do ambiente e posteriormente deploy da stack Terraform.
+  stress)
+    #terraform workspace select -or-create stress > /dev/null 2>&1                  # Selecão da workspace atualmente ocorre na pipeline devido a necessidade de ser executado depois do init.
+    #export TF_WORKSPACE="stress"                                                   # Caso a workspace não exista ainda, essa variável de ambiente preenchida não cria a workspace, logo foi passado para a pipeline através de linha de comando pelo mesmo motivo descrito acima.
+    export VAULT_ADDR="http://vault.pre.sicredi.net:8200"                        # URL do Vault do ambiente
+    export TF_VAR_VAULT_METHOD="aws"                                             # Carrega variáveis de autenticação do Vault
+    export TF_VAR_VAULT_PATH="auth/aws/login"
+    export TF_VAR_VAULT_PARAMETERS='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+    export OS_PROJECT_NAME="stress"                                                 # Nome do Projeto Openstack do ambiente
+    export OS_AUTH_URL="https://keystone.api.dtu.infra.sicredi.net:5000/v3"      # URL de autenticação no Openstack - API de autenticação
+    export OS_IDENTITY_API_VERSION=3                                             # Versão da API de autenticação no Openstack
+    export OS_USER_DOMAIN_NAME="sicredi"                                         # Nome do domínio de usuário do Openstack
+    export OS_PROJECT_DOMAIN_NAME="sicredi"                                      # Nome do domínio do projeto do ambiente no Openstack
+    export OS_AUTH_TYPE="v3token"                                                # Método que será utilizado para autenticação no Openstack
+
+    # Busca o Token temporário para autenticação e deploy no Openstack
+    # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+    # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+    # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+    export OS_TOKEN=$( \
+              OS_USER_CREDENTIALS=$( \
+                 VAULT_TOKEN=$( \
+                    vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac-node \
+                 ) \
+                 vault kv get -format=json -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack | jq -r '.data' \
+              ) && \
+              curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+                 \"auth\": { \
+                    \"identity\": { \
+                       \"methods\": [\"password\"], \
+                       \"password\": { \
+                          \"user\": { \
+                             \"domain\": { \
+                                \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                             }, \
+                             \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                             \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                          } \
+                       } \
+                    } \
+                 } \
+              }" | \
+              grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+    )
+    ;;
+  # Caso o parametro do ambiente seja "dev"
+  # Primeiramente carrega as variáveis necessárias para buscar as credenciais do Openstack autenticando no Vault do ambiente e posteriormente deploy da stack Terraform.
+  prd)
+    #terraform workspace select -or-create prd > /dev/null 2>&1                  # Selecão da workspace atualmente ocorre na pipeline devido a necessidade de ser executado depois do init.
+    #export TF_WORKSPACE="prd"                                                   # Caso a workspace não exista ainda, essa variável de ambiente preenchida não cria a workspace, logo foi passado para a pipeline através de linha de comando pelo mesmo motivo descrito acima.
+    export VAULT_ADDR="http://172.21.14.34:8200"                             # URL do Vault do ambiente
+    export TF_VAR_VAULT_METHOD="aws"                                             # Carrega variáveis de autenticação do Vault
+    export TF_VAR_VAULT_PATH="auth/aws/login"
+    export TF_VAR_VAULT_PARAMETERS='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+    export OS_PROJECT_NAME="PRD"                                                 # Nome do Projeto Openstack do ambiente
+    export OS_AUTH_URL="https://keystone.oam.prd.infra.sicredi.net:5000/v3"      # URL de autenticação no Openstack - API de autenticação
+    export OS_IDENTITY_API_VERSION=3                                             # Versão da API de autenticação no Openstack
+    export OS_USER_DOMAIN_NAME="sicredi"                                         # Nome do domínio de usuário do Openstack
+    export OS_PROJECT_DOMAIN_NAME="sicredi"                                      # Nome do domínio do projeto do ambiente no Openstack
+    export OS_AUTH_TYPE="v3token"                                                # Método que será utilizado para autenticação no Openstack
+
+    # Busca o Token temporário para autenticação e deploy no Openstack
+    # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+    # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+    # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+    export OS_TOKEN=$( \
+              OS_USER_CREDENTIALS=$( \
+                 VAULT_TOKEN=$( \
+                    vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac-node \
+                 ) \
+                 vault kv get -format=json -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack | jq -r '.data' \
+              ) && \
+              curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+                 \"auth\": { \
+                    \"identity\": { \
+                       \"methods\": [\"password\"], \
+                       \"password\": { \
+                          \"user\": { \
+                             \"domain\": { \
+                                \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                             }, \
+                             \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                             \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                          } \
+                       } \
+                    } \
+                 } \
+              }" | \
+              grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+    )
+    ;;
+  *)
+    echo "Ambiente inválido: $1"
+    echo "Ambientes disponíveis: dev, uat, stress, prd"
+    exit 1
+    ;;
+esac

@@ -1,0 +1,116 @@
+#!/bin/sh
+# Shell responsável por carregar variáveis com base no ambiente que é passado como parâmetro.
+
+# Roles que serão assumidas conforme o ambiente onde for necessário o deploy da stack Terraform
+# arn:aws:iam::387009683574:role/DEV-CI-NODES
+# arn:aws:iam::548730833675:role/UAT-CI-NODES
+# arn:aws:iam::825715253232:role/PRD-CI-NODES
+# arn:aws:iam::291876315803:role/SHD-SP-CI-NODES
+# arn:aws:iam::291876315803:role/SHD-US-CI-NODES
+
+environment=$1
+
+# Carrega as variáveis comuns a todos os ambiente.
+export VAULT_ADDR="https://vault.sicredi.in"                                 # URL do Vault para buscar usuário
+export TF_VAR_vault_method="aws"                                             # Carrega variáveis de perfil para autenticação no Vault
+export TF_VAR_vault_path="auth/aws/login"
+export TF_VAR_vault_parameters='{role="iac-node", region="sa-east-1", sts_region="sa-east-1"}'
+export OS_PROJECT_NAME=$environment                                          # Nome do Projeto Openstack do ambiente
+export OS_IDENTITY_API_VERSION=3                                             # Versão da API de autenticação no Openstack
+export OS_USER_DOMAIN_NAME="sicredi"                                         # Nome do domínio de usuário do Openstack
+export OS_PROJECT_DOMAIN_NAME="sicredi"                                      # Nome do domínio do projeto do ambiente no Openstack
+export OS_AUTH_TYPE="v3token"                                                # Método que será utilizado para autenticação no Openstack
+
+# Caso o ambiente desejado se sicredi-shd ou prd, carrega url da API openstack de PROD. Caso contrário, de DTH.
+if [ "$environment" = "sicredi-shd" ] || [ "$environment" = "prd" ]; then
+       export OS_AUTH_URL="https://keystone.oam.prd.infra.sicredi.net:5000/v3"      # URL da API de autenticação Openstack produção
+    else if [ "$environment" = "dev" ] || [ "$environment" = "uat" ] || [ "$environment" = "stress" ]; then
+       export OS_AUTH_URL="https://keystone.api.dtu.infra.sicredi.net:5000/v3"      # URL da API de autenticação Openstack não produção
+    fi
+fi
+
+# Função que carrega em variavel de ambiente, o token temporário de login na Openstack.
+function get_os_token() { eploy no Openstack
+   # Primeiramente loga no Vault do ambiente e busca as credenciais do usuário de aplicação criado para o runner
+   # Sem carregá-las para variáveis, utiliza-as para gerar um token temporário de autenticação no Openstack e manter a segurança.
+   # Para isso, utiliza uma "request" JSON na API com as credenciais do Vault, e filtra o Token que é retornado no HEADER da resposta
+   export OS_TOKEN=$( \
+            OS_USER_CREDENTIALS=$( \
+               VAULT_TOKEN=$( \
+                   vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac-node \
+               ) \
+               vault kv get -format=json -address=$VAULT_ADDR secret/stacks/runner-terraform-openstack | jq -r '.data' \
+            ) && \
+            curl -i -s -X POST $OS_AUTH_URL/auth/tokens?nocatalog -H "Content-Type: application/json" -d "{ \
+               \"auth\": { \
+                  \"identity\": { \
+                     \"methods\": [\"password\"], \
+                     \"password\": { \
+                        \"user\": { \
+                           \"domain\": { \
+                              \"name\": \"$OS_USER_DOMAIN_NAME\" \
+                           }, \
+                           \"name\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_id')\", \
+                           \"password\": \"$(echo $OS_USER_CREDENTIALS | jq -r '.user_secret')\" \
+                        } \
+                     } \
+                  } \
+               } \
+            }" | \
+            grep -i 'X-Subject-Token:' | awk '{print $2}' | tr -d '\r' \
+   )
+}
+
+# Função que carrega em variaveis de ambiente, as credenciais temporárias para login na AWS.
+function get_aws_credentials() {
+   local ROLE=$1                    # Carrega a role passada como parâmetro para variável
+   local AWS_STS_CREDENTIALS=$(aws sts assume-role --role-arn $ROLE --role-session-name "Terraform_Session")      # Assume a Role informada a partir da role do IAM Profile do ec2
+
+   export AWS_ACCESS_KEY_ID=$(echo $AWS_STS_CREDENTIALS | jq '.Credentials.AccessKeyId' -r)              # Faz um parse no json de output do comando anterior, buscando as credenciais temporarias para a AWS.
+   export AWS_SECRET_ACCESS_KEY=$(echo $AWS_STS_CREDENTIALS | jq '.Credentials.SecretAccessKey' -r)
+   export AWS_SESSION_TOKEN=$(echo $AWS_STS_CREDENTIALS | jq '.Credentials.SessionToken' -r)
+}
+
+case "$environment" in
+   dev)
+      # Ambiente DEV. Carrega variaveis para deploy tanto na AWS como Openstack
+      AWS_ASSUME_ROLE="arn:aws:iam::387009683574:role/DEV-CI-NODES"        # Role de DEV com permissões para ser assumida pela instancia ec2
+      get_os_token
+      get_aws_credentials $AWS_ASSUME_ROLE
+      ;;
+   uat)
+      # Ambiente UAT. Carrega variaveis para deploy tanto na AWS como Openstack
+      AWS_ASSUME_ROLE="arn:aws:iam::548730833675:role/UAT-CI-NODES"        # Role de UAT com permissões para ser assumida pela instancia ec2
+      get_os_token
+      get_aws_credentials $AWS_ASSUME_ROLE
+      ;;
+   stress)
+      # Ambiente STRESS. Carrega variaveis para deploy tanto na AWS como Openstack
+      get_os_token
+      ;;
+   prd)
+      # Ambiente PRD. Carrega variaveis para deploy tanto na AWS como Openstack
+      AWS_ASSUME_ROLE="arn:aws:iam::825715253232:role/PRD-CI-NODES"        # Role de PRD com permissões para ser assumida pela instancia ec2
+      get_os_token
+      get_aws_credentials $AWS_ASSUME_ROLE
+      ;;
+   sicredi-shd)
+      # Ambiente SHD exclusivo openstack.
+      get_os_token
+      ;;
+   shd_sp)
+      # Ambiente SHD exclusivo AWS sa-east
+      AWS_ASSUME_ROLE="arn:aws:iam::291876315803:role/SHD-SP-CI-NODES"     # Role de SHD_SP com permissões para ser assumida pela instancia ec2
+      get_aws_credentials $AWS_ASSUME_ROLE
+      ;;
+   shd_us)
+      # Ambiente SHD exclusivo AWS us-east
+      AWS_ASSUME_ROLE="arn:aws:iam::548730833675:role/UAT-CI-NODES"        # Role de SHD_US com permissões para ser assumida pela instancia ec
+      get_aws_credentials $AWS_ASSUME_ROLE
+      ;;
+   *)
+      echo "Ambiente inválido: $environment"
+      echo "Ambientes disponíveis: dev, uat, stress, prd, sicredi-shd, shd_sp, shd_us"
+      exit 1
+      ;;
+esac
