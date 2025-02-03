@@ -1,0 +1,10 @@
+IMDSv2 (Instance Metadata Service v2) A AWS introduziu a versão 2 do serviço de metadados de instância (IMDSv2), que requer um token de sessão para acessar os metadados.
+Para usar o IMDSv2, você precisa primeiro obter um token de sessão e depois usá-lo para acessar os metadados. Aqui estão os comandos:
+
+- Obter um Token de Sessão:
+
+- TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+Usar o Token de Sessão para Acessar os Metadados:
+- curl -H "X-aws-ec2-metadata-token: $TOKEN" "http://169.254.169.254/latest/dynamic/instance-identity/document"
+

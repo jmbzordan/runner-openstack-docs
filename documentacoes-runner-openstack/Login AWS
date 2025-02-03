@@ -1,0 +1,14 @@
+Um runner em uma instancia EC2 em uma conta AWS, possui uma ROLE atrelada a ela que chamamos de IAM Profile. Essa ROle define as permissões de acesso dessa instancia EC2, independente do usuário logado nessa instancia. Essa ROLE "pode ser de 2 tipos":
+
+- Ela pode ter uma série de permissões a recursos dessa conta onde a instância se encontra criada.
+- Pode ter mais outras permissões chamadas de "AssumeRole", as quais definem uma ROLE secundária a qual essa instancia pode assumir e utilizar as permissões liberadas nela. Para isso, tanto a ROLE profile precisa liberar a role secundaria que pode ser acessada, bem como a ROLE secundária precisa permitir que a ROLE primária a assuma.
+
+No runner construído, é utilizada a segunda estratégia, pois o runner está na conta SHD e necessita acessar todas as outras contas DEV, UAT, STRESS, PROD, SHD... e ter acesso de criar e alterar recursos. Para isso é utilizada a ROLE PROFILE IAM "SHD-SP-CI-IAC-NODES" que possui em suas regras, a liberaçao de assumir as seguintes outras roles:
+
+ arn:aws:iam::387009683574:role/DEV-CI-NODES
+ arn:aws:iam::548730833675:role/UAT-CI-NODES
+ arn:aws:iam::825715253232:role/PRD-CI-NODES
+ arn:aws:iam::291876315803:role/SHD-SP-CI-NODES
+ arn:aws:iam::291876315803:role/SHD-US-CI-NODES
+
+ Já o terraform state é salvo na conta SHD, logo a instancia nativamente possui o acesso a essa conta na role associada a ela.

@@ -1,0 +1,35 @@
+######## INSTALAÇÃO MODO ALL IN ONE ########
+
+Primeiramente é necessário instalar alguns pre-requisitos:
+
+* Criar usuário stack:
+- useradd -s /bin/bash -m stack
+
+* Adicionar usuário stack aos sudoers:
+- yum install -y sudo
+- echo "stack ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# LOGAR COM O USUÁRIO stack
+
+* Instalar o git e clonar o repositório openstack, entrando no diretório do repositório:
+- sudo yum install -y git
+- git clone https://git.openstack.org/openstack-dev/devstack
+- cd devstack
+
+* Criar arquivo local.conf e adicionar as seguintes linhas:
+- echo '[[local|localrc]]' > local.conf
+- echo ADMIN_PASSWORD=password >> local.conf
+- echo DATABASE_PASSWORD=password >> local.conf
+- echo RABBIT_PASSWORD=password >> local.conf
+- echo SERVICE_PASSWORD=password >> local.conf
+
+
+* Executar a instalação:
+- ./stack.sh
+
+
+* CASO DE ERRO NA INSTALAÇÃO DO RABBITMQ-SERVER:
+- causa: diferença de nome do pacote nas distribuições Linux
+    * Basta instalar o repositório do RabbitMQ:
+    - dnf install centos-release-rabbitmq-38.noarch
+    - dnf install -y rabbitmq-server.x86_64

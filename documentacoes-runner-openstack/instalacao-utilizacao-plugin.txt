@@ -1,0 +1,74 @@
+########## PASSOS PARA CONFIGURAÇÃO DO PLUGIN VAULT-openstack ##########
+
+#### CONFIGURAÇÃO DE INFRA ####
+# Baixar o plugin via git clone https://github.com/opentelekomcloud/vault-plugin-secrets-openstack/tree/v1.3.4
+
+# Criar uma pasta "plugins" dentro de /etc/vault.d/ e mover o projeto clonado para ela
+
+# Adicionar a seguinte linha ao arquivo /etc/vault.d/vault.hcl
+
+- plugin_directory="/etc/vault.d/plugins"
+
+---------------------------------------------------------------
+
+#### REGISTRO DO PLUGIN DENTRO DA APLICAÇÃO VAULT ####
+-> Primeiro passo para configuração na aplicação Vault: 
+   - Logar no Vault em questão 
+
+# Necessário calcular o SHA256 do plugin para poder registrá-lo no catalogo de plugins do Vault:
+export SHA256=$(sha256sum "/etc/vault.d/plugins/vault-plugin-secrets-openstack" | cut -d' ' -f1)
+
+# Registro propriamente dito do plugin no Vault.
+vault write sys/plugins/catalog/vault-plugin-secrets-openstack sha_256="${SHA256}" command="vault-plugin-secrets-openstack"
+
+# Ativação de uma secret engine específica para secrets do Openstack:
+vault secrets enable -path="openstack" -plugin-name="vault-plugin-secrets-openstack" plugin
+
+# Define um usuário admin da cloud (Openstack) no Vault para realização da integração. Define-se um path no vault e passamos a URL de autenticação do openstack
+vault write openstack/clouds/private auth_url=OPENSTACK_IDENTITY_URL  username=admin password=sicredi123 user_domain_name=Default
+
+---------------------------------------------------------------
+
+#### EXEMPLOS DE DEFINIÇÕES DE ROLES DE CRIAÇÃO DE TOKENS TEMPORARIOS PARA O OPENSTACK ####
+
+***** PRESTAR ATENÇÃO NOS PATHS DAS ROLES *****
+
+# Role que define token com acessos do grupo admins e com escopo SOMENTE no project admin (importante!)
+vault write /openstack/roles/private_tmp_user_role cloud=private project-name=admin domain-name=Default secret-type=token root=false user-groups=admins
+
+# Como gerar o token para login:
+vault read openstack/creds/private_tmp_user_role
+
+# Role que define token com acesso de root com escopo SOMENTE no project admins
+vault write /openstack/roles/private_root_role cloud=private project_name=admin domain_name=Default secret-type=token root=true
+
+# Gerando o token root
+vault read openstack/roles/private_root_role
+
+#### É possível definir uma role para geração de usuário/senha temporário, além de diversas políticas de definição dos users, das senhas, dos tokens como número de caracteres, maisculas, escopos, poderes e etc.
+
+Verificar as possibilidades de configuração do plugin no link da documentação do plugin:
+https://github.com/opentelekomcloud/vault-plugin-secrets-openstack/tree/v1.3.4/doc/source
+
+
+# EXEMPLOS DE POLICIES #
+
+length = 20
+rule "charset" {
+  charset = "abcdefghijklmnopqrstuvwxyz"
+  min-chars = 1
+}
+rule "charset" {
+  charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  min-chars = 1
+}
+rule "charset" {
+  charset = "0123456789"
+  min-chars = 1
+}
+rule "charset" {
+  charset = "!@#$%^&*"
+  min-chars = 1
+}
+
+Com o token em mãos, é possível exportá-lo para uma variável de ambiente a fim de aplicar o terraform

@@ -1,0 +1,35 @@
+************ CASO QUISESSE LOGAR NO VAULT UTILIZANDO UMA ROLE E SECRET ID: ************
+
+Geramos um arquivo gitlab-runner-policy.hcl com o seguinte conteúdo a fim de criar uma policy par ao approle:
+- path "secret/data/stacks/gitlab-runner-terraform-openstack" { capabilities = ["read"] }
+
+Criamos uma policy passando o arquivo com a regra:
+- vault policy write gitlab-runner-policy gitlab-runner-policy.hcl
+
+
+Criamos uma role e associamos ela à policy criada acima:
+- vault write auth/approle/role/gitlab-runner-role token_policies="gitlab-runner-policy"
+
+Para autenticarmos, precisamos do role-id e o secret-id. Para lermos o id da role que criamos, utilizamos o seguinte comando:
+- vault read auth/approle/role/gitlab-runner-role/role-id
+
+Para lermos o secret, automaticamente um secret será criado a cada leitura. Para que não geremos milhares de secrets para uma role, iremos acrescentar um "time to live" que representa um tempo em que o secret se manterá ativo. Assim, o secret se torna temporário, o que nos garante certa segurança. Sendo assim, iremos ler o secret e definir que ele será valido durante 1h:
+
+- vault write -f auth/approle/role/gitlab-runner-role/secret-id ttl=1h
+
+Dessa forma iremos fazer login com a role e secret id coletadas:
+- vault write auth/approle/login role_id="$ROLE_ID" secret_id="$SECRET_ID"
+
+# Resumo de um bash_profile:
+
+export ROLE_ID=$(vault read auth/approle/role/gitlab-runner-role/role-id)
+export SECRET_ID=$(vault write -f -format=json auth/approle/role/gitlab-runner-role/secret-id ttl=24h | jq -r '.data.secret_id')
+vault write auth/approle/login role_id="$ROLE_ID" secret_id="$SECRET_ID"
+
+
+************ UTILIZANDO UM SERVIDOR AWS: ************
+
+Criar uma instancia EC2 e associar um IAM profile a ela com a role iac-node. Esse profile associado, permite que todos que loguem no servidor obtenham a role que sera utilizada para login no vault: 
+
+Como logaremos e nos será retornado um token temporário armazenando em uma variável de ambiente:
+VAULT_TOKEN=$(vault login -no-store -token-only -address=$VAULT_ADDR -method=aws role=iac region=us-east-1)

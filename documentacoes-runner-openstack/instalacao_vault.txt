@@ -1,0 +1,17 @@
+sudo yum install -y yum-utils
+
+sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+
+sudo yum -y install vault
+
+Necessário configurar o listener http no arquivo de configuração /etc/vault.d/vault.hcl:
+
+# HTTP listener
+listener "tcp" {
+  address = "100.94.42.226:8200"
+  tls_disable = 1
+}
+
+plugin_directory="/etc/vault.d/plugins"
+
+api_addr="http://100.94.42.226:8200"
